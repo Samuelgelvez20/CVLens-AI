@@ -36,3 +36,38 @@ def renderizar_sidebar() -> None:
         st.info(
             "Sube un PDF con texto seleccionable. No se aplica OCR a documentos escaneados."
         )
+
+
+def renderizar_entradas():
+    """Renderiza los controles de carga de CV, descripción del puesto y botones de acción."""
+    col_cv, col_puesto = st.columns(2)
+
+    with col_cv:
+        st.subheader("1. Currículum del Candidato")
+        archivo_cv = st.file_uploader(
+            "Carga el CV en formato PDF",
+            type=["pdf"],
+            help="Solo se admiten archivos PDF con texto seleccionable.",
+        )
+
+    with col_puesto:
+        st.subheader("2. Descripción del Puesto")
+        descripcion_puesto = st.text_area(
+            "Requisitos, habilidades y responsabilidades del puesto",
+            height=200,
+            placeholder=(
+                "Puesto: Desarrollador Python\n"
+                "Requisitos obligatorios: 3 años de experiencia, Python, APIs REST y PostgreSQL.\n"
+                "Deseables: Docker, pruebas automatizadas y experiencia con LangChain.\n"
+                "Responsabilidades: desarrollar servicios, integrar APIs y mantener pruebas."
+            ),
+        )
+
+    col_btn_analizar, col_btn_limpiar, _ = st.columns([1, 1, 4])
+    with col_btn_analizar:
+        analizar_btn = st.button("Analizar Candidato", type="primary", use_container_width=True)
+    with col_btn_limpiar:
+        limpiar_btn = st.button("Limpiar", use_container_width=True)
+
+    return archivo_cv, descripcion_puesto, analizar_btn, limpiar_btn
+
