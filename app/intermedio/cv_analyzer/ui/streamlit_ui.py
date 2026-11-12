@@ -23,12 +23,26 @@ def inicializar_estado() -> None:
         "vacante_titulo_input": "",
         "vacante_desc_input": "",
         "ultimo_resultado": None,
-        "vista_historial": None,
         "mensaje_guardado": False,
     }
     for clave, valor in valores_por_defecto.items():
         if clave not in st.session_state:
             st.session_state[clave] = valor
+
+
+def limpiar_formulario() -> None:
+    """Limpia los campos del formulario y el resultado actual antes de instanciar widgets."""
+    st.session_state["vacante_titulo_input"] = ""
+    st.session_state["vacante_desc_input"] = ""
+    st.session_state["ultimo_resultado"] = None
+    st.session_state["mensaje_guardado"] = False
+    st.session_state["uploader_key"] += 1
+
+
+def cargar_vacante_en_formulario(titulo: str, descripcion: str) -> None:
+    """Carga una vacante del historial en el formulario principal."""
+    st.session_state["vacante_titulo_input"] = titulo
+    st.session_state["vacante_desc_input"] = descripcion
 
 
 def configurar_pagina() -> None:
@@ -92,22 +106,14 @@ def renderizar_sidebar() -> None:
                         key=f"ver_vacante_{vacante['id']}",
                         use_container_width=True,
                     ):
-                        st.session_state["vista_historial"] = {
-                            "modo": "vacante",
-                            "vacante_id": vacante["id"],
-                        }
-                        st.rerun()
+                        mostrar_dialogo_vacante(vacante["id"])
                 with col_c:
                     if st.button(
                         "Ver CVs",
                         key=f"ver_cvs_{vacante['id']}",
                         use_container_width=True,
                     ):
-                        st.session_state["vista_historial"] = {
-                            "modo": "cvs",
-                            "vacante_id": vacante["id"],
-                        }
-                        st.rerun()
+                        mostrar_dialogo_cvs(vacante["id"])
 
 
 def renderizar_entradas():
@@ -146,9 +152,9 @@ def renderizar_entradas():
     with col_btn_analizar:
         analizar_btn = st.button("Analizar Candidato", type="primary", use_container_width=True)
     with col_btn_limpiar:
-        limpiar_btn = st.button("Limpiar", use_container_width=True)
+        st.button("Limpiar", on_click=limpiar_formulario, use_container_width=True)
 
-    return archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn, limpiar_btn
+    return archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn
 
 
 def obtener_evaluacion_principal(porcentaje: int) -> str:
@@ -253,54 +259,39 @@ def generar_csv_candidatos(analisis_lista: list[dict]) -> str:
     return buffer.getvalue()
 
 
-def renderizar_vista_historial() -> None:
-    """Muestra el detalle de la vacante o los CVs asociados seleccionados desde el historial."""
-    vista = st.session_state.get("vista_historial")
-    if not vista:
-        return
-
-    vacante = obtener_vacante_por_id(vista["vacante_id"])
+@st.dialog("Enunciado completo de la vacante", width="large")
+def mostrar_dialogo_vacante(vacante_id: int) -> None:
+    """Muestra el enunciado completo de una vacante en un diálogo modal."""
+    vacante = obtener_vacante_por_id(vacante_id)
     if not vacante:
-        st.session_state["vista_historial"] = None
+        st.warning("No se encontró la vacante seleccionada.")
         return
 
-    st.divider()
-    col_titulo, col_cerrar = st.columns([5, 1])
-    with col_titulo:
-        if vista["modo"] == "vacante":
-            st.subheader(f"📋 Vacante: {vacante['titulo']}")
-        else:
-            st.subheader(f"👥 CVs aplicados a: {vacante['titulo']}")
-    with col_cerrar:
-        if st.button("Cerrar vista", use_container_width=True):
-            st.session_state["vista_historial"] = None
-            st.rerun()
+    st.subheader(vacante["titulo"])
+    st.text_area(
+        "Enunciado guardado",
+        value=vacante["descripcion"],
+        height=260,
+        disabled=True,
+        label_visibility="collapsed",
+    )
+    st.button(
+        "Cargar en el formulario",
+        on_click=cargar_vacante_en_formulario,
+        args=(vacante["titulo"], vacante["descripcion"]),
+        use_container_width=True,
+    )
 
-    if vista["modo"] == "vacante":
-        st.markdown("**Enunciado completo de la vacante:**")
-        st.text_area(
-            "Enunciado guardado",
-            value=vacante["descripcion"],
-            height=240,
-            disabled=True,
-            label_visibility="collapsed",
-        )
-        col_a, col_b, _ = st.columns([1.5, 1.5, 3])
-        with col_a:
-            if st.button("Cargar en el formulario", use_container_width=True):
-                st.session_state["vacante_titulo_input"] = vacante["titulo"]
-                st.session_state["vacante_desc_input"] = vacante["descripcion"]
-                st.session_state["vista_historial"] = None
-                st.rerun()
-        with col_b:
-            if st.button("Ver CVs de esta vacante", use_container_width=True):
-                st.session_state["vista_historial"] = {
-                    "modo": "cvs",
-                    "vacante_id": vacante["id"],
-                }
-                st.rerun()
+
+@st.dialog("CVs aplicados a la vacante", width="large")
+def mostrar_dialogo_cvs(vacante_id: int) -> None:
+    """Muestra el ranking, exportación y detalle de los CVs guardados para una vacante."""
+    vacante = obtener_vacante_por_id(vacante_id)
+    if not vacante:
+        st.warning("No se encontró la vacante seleccionada.")
         return
 
+    st.subheader(vacante["titulo"])
     analisis_lista = listar_analisis_por_vacante(vacante["id"])
     if not analisis_lista:
         st.info("Todavía no hay CVs guardados para esta vacante.")
@@ -319,7 +310,7 @@ def renderizar_vista_historial() -> None:
     ]
     st.dataframe(tabla_resumen, use_container_width=True, hide_index=True)
 
-    col_csv, col_json, _ = st.columns([1, 1, 4])
+    col_csv, col_json = st.columns(2)
     with col_csv:
         st.download_button(
             label="Exportar CSV",
@@ -397,16 +388,7 @@ def main() -> None:
     configurar_pagina()
     renderizar_sidebar()
 
-    archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn, limpiar_btn = renderizar_entradas()
-
-    if limpiar_btn:
-        st.session_state["vacante_titulo_input"] = ""
-        st.session_state["vacante_desc_input"] = ""
-        st.session_state["ultimo_resultado"] = None
-        st.session_state["vista_historial"] = None
-        st.session_state["mensaje_guardado"] = False
-        st.session_state["uploader_key"] += 1
-        st.rerun()
+    archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn = renderizar_entradas()
 
     if analizar_btn:
         if not archivo_cv or not descripcion_puesto.strip():
@@ -443,5 +425,3 @@ def main() -> None:
 
     if st.session_state.get("ultimo_resultado"):
         mostrar_resultados(st.session_state["ultimo_resultado"])
-
-    renderizar_vista_historial()
