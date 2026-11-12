@@ -1,5 +1,17 @@
 # CVLens-AI — Analizador de Currículums con IA
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Status-Completado-success?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Version-v1.0.0-blue?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" />
+  <img src="https://img.shields.io/badge/Google_Gemini-8E75C2?style=for-the-badge&logo=google&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" />
+</p>
+
+
 Aplicación web construida con **Streamlit**, **LangChain** y **Google Gemini** que compara uno o varios currículums en PDF frente a la descripción de una vacante, genera un análisis estructurado con porcentaje de ajuste y almacena el historial de vacantes y candidatos en **PostgreSQL** (con respaldo automático en **SQLite** para ejecución local).
 
 ---
@@ -84,3 +96,16 @@ python -m streamlit run app.py --server.port=8501
 ```
 
 *(En ejecución local sin PostgreSQL, la aplicación guarda automáticamente el historial en un archivo local `cv_analyzer.db` con SQLite.)*
+
+---
+
+## 👥 Metodología y Flujo Git Flow
+
+- **Estrategia de Ramificación:** Separación de trabajo en ramas de características (, , , , ), integradas en  y estabilizadas en  bajo la versión .
+- **Conventional Commits:** Trazabilidad estandarizada (, , , ).
+
+---
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia **MIT** — consulta el archivo [LICENSE](LICENSE) para más detalles.
