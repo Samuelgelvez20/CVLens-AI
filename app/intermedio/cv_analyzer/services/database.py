@@ -110,3 +110,98 @@ def inicializar_bd() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def extraer_titulo_vacante(descripcion: str) -> str:
+    """Obtiene un título corto representativo a partir del enunciado de la vacante."""
+    for linea in descripcion.splitlines():
+        limpia = linea.strip()
+        if not limpia:
+            continue
+        if limpia.lower().startswith("puesto:"):
+            limpia = limpia.split(":", 1)[1].strip()
+        return limpia[:80] if len(limpia) <= 80 else limpia[:77] + "..."
+    return "Vacante sin título"
+
+
+def guardar_analisis_en_bd(
+    titulo_vacante: str,
+    descripcion_vacante: str,
+    nombre_archivo_pdf: str,
+    analisis: AnalisisCV,
+) -> tuple[int, int]:
+    """Guarda o reutiliza la vacante y registra el análisis del CV asociado."""
+    inicializar_bd()
+    titulo_final = (titulo_vacante or "").strip() or extraer_titulo_vacante(descripcion_vacante)
+    descripcion_limpia = descripcion_vacante.strip()
+
+    conn, motor = obtener_conexion()
+    placeholder = "%s" if motor == "postgres" else "?"
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT id FROM vacantes WHERE descripcion = {placeholder} LIMIT 1",
+            (descripcion_limpia,),
+        )
+        fila_vacante = cursor.fetchone()
+
+        if fila_vacante:
+            vacante_id = fila_vacante[0] if not isinstance(fila_vacante, dict) else fila_vacante["id"]
+        else:
+            if motor == "postgres":
+                cursor.execute(
+                    "INSERT INTO vacantes (titulo, descripcion) VALUES (%s, %s) RETURNING id",
+                    (titulo_final, descripcion_limpia),
+                )
+                vacante_id = cursor.fetchone()[0]
+            else:
+                cursor.execute(
+                    "INSERT INTO vacantes (titulo, descripcion) VALUES (?, ?)",
+                    (titulo_final, descripcion_limpia),
+                )
+                vacante_id = cursor.lastrowid
+
+        datos_analisis = (
+            vacante_id,
+            nombre_archivo_pdf or "cv.pdf",
+            analisis.nombre_candidato,
+            analisis.experiencia_años,
+            json.dumps(analisis.habilidades_clave, ensure_ascii=False),
+            analisis.education,
+            analisis.experiencia_relevante,
+            json.dumps(analisis.fortalezas, ensure_ascii=False),
+            json.dumps(analisis.areas_mejora, ensure_ascii=False),
+            analisis.porcentaje_ajuste,
+        )
+
+        if motor == "postgres":
+            cursor.execute(
+                """
+                INSERT INTO analisis_cv (
+                    vacante_id, nombre_archivo_pdf, nombre_candidato, experiencia_anos,
+                    habilidades_clave, education, experiencia_relevante,
+                    fortalezas, areas_mejora, porcentaje_ajuste
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                datos_analisis,
+            )
+            analisis_id = cursor.fetchone()[0]
+        else:
+            cursor.execute(
+                """
+                INSERT INTO analisis_cv (
+                    vacante_id, nombre_archivo_pdf, nombre_candidato, experiencia_anos,
+                    habilidades_clave, education, experiencia_relevante,
+                    fortalezas, areas_mejora, porcentaje_ajuste
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                datos_analisis,
+            )
+            analisis_id = cursor.lastrowid
+
+        conn.commit()
+        return int(vacante_id), int(analisis_id)
+    finally:
+        conn.close()
+
