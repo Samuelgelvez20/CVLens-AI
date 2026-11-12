@@ -205,3 +205,87 @@ def guardar_analisis_en_bd(
     finally:
         conn.close()
 
+
+def listar_vacantes() -> list[dict]:
+    """Devuelve todas las vacantes guardadas junto con la cantidad de CVs asociados."""
+    inicializar_bd()
+    conn, motor = obtener_conexion()
+    try:
+        cursor = (
+            conn.cursor(cursor_factory=RealDictCursor)
+            if motor == "postgres" and RealDictCursor
+            else conn.cursor()
+        )
+        cursor.execute(
+            """
+            SELECT v.id, v.titulo, v.descripcion, v.fecha_creacion,
+                   COUNT(a.id) AS total_cvs
+            FROM vacantes v
+            LEFT JOIN analisis_cv a ON a.vacante_id = v.id
+            GROUP BY v.id, v.titulo, v.descripcion, v.fecha_creacion
+            ORDER BY v.fecha_creacion DESC, v.id DESC
+            """
+        )
+        filas = cursor.fetchall()
+        return [dict(fila) for fila in filas]
+    finally:
+        conn.close()
+
+
+def obtener_vacante_por_id(vacante_id: int) -> dict | None:
+    """Obtiene los datos completos de una vacante por su identificador."""
+    inicializar_bd()
+    conn, motor = obtener_conexion()
+    placeholder = "%s" if motor == "postgres" else "?"
+    try:
+        cursor = (
+            conn.cursor(cursor_factory=RealDictCursor)
+            if motor == "postgres" and RealDictCursor
+            else conn.cursor()
+        )
+        cursor.execute(
+            f"SELECT id, titulo, descripcion, fecha_creacion FROM vacantes WHERE id = {placeholder}",
+            (vacante_id,),
+        )
+        fila = cursor.fetchone()
+        return dict(fila) if fila else None
+    finally:
+        conn.close()
+
+
+def listar_analisis_por_vacante(vacante_id: int) -> list[dict]:
+    """Devuelve todos los análisis de CV de una vacante ordenados por porcentaje de ajuste."""
+    inicializar_bd()
+    conn, motor = obtener_conexion()
+    placeholder = "%s" if motor == "postgres" else "?"
+    try:
+        cursor = (
+            conn.cursor(cursor_factory=RealDictCursor)
+            if motor == "postgres" and RealDictCursor
+            else conn.cursor()
+        )
+        cursor.execute(
+            f"""
+            SELECT id, vacante_id, nombre_archivo_pdf, nombre_candidato,
+                   experiencia_anos, habilidades_clave, education,
+                   experiencia_relevante, fortalezas, areas_mejora,
+                   porcentaje_ajuste, fecha_analisis
+            FROM analisis_cv
+            WHERE vacante_id = {placeholder}
+            ORDER BY porcentaje_ajuste DESC, fecha_analisis DESC
+            """,
+            (vacante_id,),
+        )
+        filas = cursor.fetchall()
+        resultados = []
+        for fila in filas:
+            item = dict(fila)
+            item["habilidades_clave"] = json.loads(item["habilidades_clave"])
+            item["fortalezas"] = json.loads(item["fortalezas"])
+            item["areas_mejora"] = json.loads(item["areas_mejora"])
+            resultados.append(item)
+        return resultados
+    finally:
+        conn.close()
+
+
