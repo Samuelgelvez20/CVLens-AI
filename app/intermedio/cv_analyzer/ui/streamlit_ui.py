@@ -147,3 +147,34 @@ def mostrar_resultados(resultado: AnalisisCV) -> None:
         st.info("Funcionalidad en desarrollo: el almacenamiento de análisis aún no está disponible.")
 
 
+def main() -> None:
+    """Punto de entrada principal de la interfaz de Streamlit."""
+    configurar_pagina()
+    renderizar_sidebar()
+
+    archivo_cv, descripcion_puesto, analizar_btn, limpiar_btn = renderizar_entradas()
+
+    if limpiar_btn:
+        st.rerun()
+
+    if analizar_btn:
+        if not archivo_cv or not descripcion_puesto.strip():
+            st.warning(
+                "Por favor, carga un CV en PDF y escribe la descripción del puesto antes de analizar."
+            )
+            return
+
+        with st.spinner("Extrayendo texto del PDF..."):
+            texto_cv = extraer_texto_pdf(archivo_cv)
+
+        if texto_cv.startswith("Error"):
+            st.error(texto_cv)
+            return
+
+        with st.spinner("Analizando candidato con IA..."):
+            resultado = evaluar_candidato(texto_cv, descripcion_puesto)
+
+        mostrar_resultados(resultado)
+
+
+
