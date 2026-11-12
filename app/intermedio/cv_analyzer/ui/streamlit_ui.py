@@ -1,6 +1,9 @@
 import csv
 import io
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import streamlit as st
 
 from models.cv_model import AnalisisCV
@@ -121,12 +124,13 @@ def renderizar_entradas():
     col_cv, col_puesto = st.columns(2)
 
     with col_cv:
-        st.subheader("1. Currículum del Candidato")
-        archivo_cv = st.file_uploader(
-            "Carga el CV en formato PDF",
+        st.subheader("1. Currículums de los Candidatos")
+        archivos_cv = st.file_uploader(
+            "Carga uno o varios CVs en formato PDF",
             type=["pdf"],
+            accept_multiple_files=True,
             key=f"cv_uploader_{st.session_state['uploader_key']}",
-            help="Solo se admiten archivos PDF con texto seleccionable.",
+            help="Puedes subir uno o varios archivos PDF con texto seleccionable.",
         )
 
     with col_puesto:
@@ -154,7 +158,7 @@ def renderizar_entradas():
     with col_btn_limpiar:
         st.button("Limpiar", on_click=limpiar_formulario, use_container_width=True)
 
-    return archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn
+    return archivos_cv, titulo_vacante, descripcion_puesto, analizar_btn
 
 
 def obtener_evaluacion_principal(porcentaje: int) -> str:
@@ -348,31 +352,100 @@ def mostrar_dialogo_cvs(vacante_id: int) -> None:
             renderizar_detalle_analisis(modelo_item)
 
 
-def mostrar_resultados(resultado_state: dict) -> None:
-    """Presenta el resultado del último análisis y permite guardarlo en el historial."""
+def procesar_un_cv(nombre_archivo: str, bytes_pdf: bytes, descripcion_puesto: str) -> dict:
+    """Extrae texto y evalúa un único CV devolviendo el resultado o el error amigable."""
+    texto_cv = extraer_texto_pdf(io.BytesIO(bytes_pdf))
+    if texto_cv.startswith("Error"):
+        return {
+            "nombre_archivo": nombre_archivo,
+            "ok": False,
+            "error": (
+                "No se pudo leer el contenido del PDF. "
+                "Asegúrate de que tenga texto seleccionable."
+            ),
+        }
+
+    texto_cv_seguro, fue_truncado = limitar_texto_cv(texto_cv)
+    try:
+        resultado = evaluar_candidato(texto_cv_seguro, descripcion_puesto)
+        return {
+            "nombre_archivo": nombre_archivo,
+            "ok": True,
+            "analisis": resultado,
+            "truncado": fue_truncado,
+        }
+    except EvaluacionError as err:
+        return {
+            "nombre_archivo": nombre_archivo,
+            "ok": False,
+            "error": str(err),
+        }
+
+
+def mostrar_resultados(lote_state: dict) -> None:
+    """Presenta el resultado de uno o varios análisis y permite guardarlos en el historial."""
     st.divider()
-    st.subheader("Resultados del Análisis")
+    resultados = lote_state["resultados"]
+    exitosos = [r for r in resultados if r["ok"]]
+    fallidos = [r for r in resultados if not r["ok"]]
 
-    if resultado_state.get("truncado"):
-        st.info(
-            "El documento era muy extenso y se analizó su contenido principal para agilizar la evaluación."
-        )
+    st.subheader(f"Resultados del Análisis ({len(exitosos)} de {len(resultados)} completados)")
+    st.caption(f"Tiempo total de análisis: {lote_state['duracion']:.2f} segundos")
 
-    renderizar_detalle_analisis(resultado_state["analisis"])
+    for err in fallidos:
+        st.error(f"**{err['nombre_archivo']}**: {err['error']}")
 
-    if resultado_state.get("guardado"):
-        st.success("Análisis guardado en el historial de la vacante.")
-    else:
-        if st.button("Guardar Análisis", type="secondary"):
-            try:
-                guardar_analisis_en_bd(
-                    titulo_vacante=resultado_state["titulo"],
-                    descripcion_vacante=resultado_state["descripcion"],
-                    nombre_archivo_pdf=resultado_state["nombre_archivo"],
-                    analisis=resultado_state["analisis"],
+    if not exitosos:
+        return
+
+    exitosos_ordenados = sorted(
+        exitosos,
+        key=lambda item: item["analisis"].porcentaje_ajuste,
+        reverse=True,
+    )
+
+    for idx, item in enumerate(exitosos_ordenados, start=1):
+        analisis = item["analisis"]
+        if len(exitosos_ordenados) > 1:
+            etiqueta = (
+                f"#{idx} — {analisis.nombre_candidato} | "
+                f"{analisis.porcentaje_ajuste}% ({obtener_recomendacion_final(analisis.porcentaje_ajuste)}) | "
+                f"{item['nombre_archivo']}"
+            )
+            with st.expander(etiqueta, expanded=(idx == 1)):
+                if item.get("truncado"):
+                    st.info(
+                        "El documento era muy extenso y se analizó su contenido principal."
+                    )
+                renderizar_detalle_analisis(analisis)
+        else:
+            if item.get("truncado"):
+                st.info(
+                    "El documento era muy extenso y se analizó su contenido principal para agilizar la evaluación."
                 )
-                resultado_state["guardado"] = True
-                st.session_state["ultimo_resultado"] = resultado_state
+            renderizar_detalle_analisis(analisis)
+
+    if lote_state.get("guardado"):
+        st.success(
+            f"Se guardaron {len(exitosos)} análisis en el historial de la vacante."
+        )
+    else:
+        etiqueta_btn = (
+            "Guardar Análisis"
+            if len(exitosos) == 1
+            else f"Guardar los {len(exitosos)} Análisis"
+        )
+        if st.button(etiqueta_btn, type="secondary"):
+            try:
+                for item in exitosos:
+                    guardar_analisis_en_bd(
+                        titulo_vacante=lote_state["titulo"],
+                        descripcion_vacante=lote_state["descripcion"],
+                        nombre_archivo_pdf=item["nombre_archivo"],
+                        analisis=item["analisis"],
+                    )
+                lote_state["guardado"] = True
+                st.session_state["ultimo_resultado"] = lote_state
                 st.session_state["mensaje_guardado"] = True
                 st.rerun()
             except Exception:
@@ -388,40 +461,38 @@ def main() -> None:
     configurar_pagina()
     renderizar_sidebar()
 
-    archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn = renderizar_entradas()
+    archivos_cv, titulo_vacante, descripcion_puesto, analizar_btn = renderizar_entradas()
 
     if analizar_btn:
-        if not archivo_cv or not descripcion_puesto.strip():
+        if not archivos_cv or not descripcion_puesto.strip():
             st.warning(
-                "Por favor, carga un CV en PDF y escribe la descripción del puesto antes de analizar."
+                "Por favor, carga al menos un CV en PDF y escribe la descripción del puesto antes de analizar."
             )
         else:
-            with st.spinner("Extrayendo texto del PDF..."):
-                texto_cv = extraer_texto_pdf(archivo_cv)
+            archivos_en_memoria = [
+                (archivo.name, archivo.getvalue()) for archivo in archivos_cv
+            ]
+            inicio = time.perf_counter()
+            with st.spinner(f"Analizando {len(archivos_en_memoria)} CV(s) en paralelo con IA..."):
+                with ThreadPoolExecutor(max_workers=min(4, len(archivos_en_memoria))) as pool:
+                    futuros = [
+                        pool.submit(procesar_un_cv, nombre, data, descripcion_puesto)
+                        for nombre, data in archivos_en_memoria
+                    ]
+                    resultados = [futuro.result() for futuro in futuros]
+            duracion = time.perf_counter() - inicio
 
-            if texto_cv.startswith("Error"):
-                st.error(
-                    "No se pudo leer el contenido del PDF. Asegúrate de que sea un archivo válido con texto seleccionable."
-                )
-            else:
-                texto_cv_seguro, fue_truncado = limitar_texto_cv(texto_cv)
-                with st.spinner("Analizando candidato con IA..."):
-                    try:
-                        resultado = evaluar_candidato(texto_cv_seguro, descripcion_puesto)
-                        titulo_final = (
-                            titulo_vacante.strip() or extraer_titulo_vacante(descripcion_puesto)
-                        )
-                        st.session_state["ultimo_resultado"] = {
-                            "analisis": resultado,
-                            "titulo": titulo_final,
-                            "descripcion": descripcion_puesto.strip(),
-                            "nombre_archivo": archivo_cv.name,
-                            "truncado": fue_truncado,
-                            "guardado": False,
-                        }
-                        st.session_state["mensaje_guardado"] = False
-                    except EvaluacionError as err:
-                        st.error(str(err))
+            titulo_final = (
+                titulo_vacante.strip() or extraer_titulo_vacante(descripcion_puesto)
+            )
+            st.session_state["ultimo_resultado"] = {
+                "resultados": resultados,
+                "titulo": titulo_final,
+                "descripcion": descripcion_puesto.strip(),
+                "duracion": duracion,
+                "guardado": False,
+            }
+            st.session_state["mensaje_guardado"] = False
 
     if st.session_state.get("ultimo_resultado"):
         mostrar_resultados(st.session_state["ultimo_resultado"])
