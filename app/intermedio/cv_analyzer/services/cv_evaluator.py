@@ -19,9 +19,11 @@ def crear_evaluador_cv():
         )
 
     modelo_base = ChatGoogleGenerativeAI(
-        model="gemini-3.8-flash",
+        model="gemini-3.1-flash-lite",
         temperature=0.2,
         google_api_key=api_key,
+        timeout=25,
+        max_retries=1,
     )
     modelo_estructurado = modelo_base.with_structured_output(AnalisisCV)
     chat_prompt = crear_sistema_prompts()
