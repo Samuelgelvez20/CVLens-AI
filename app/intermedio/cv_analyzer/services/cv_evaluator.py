@@ -6,6 +6,11 @@ from models.cv_model import AnalisisCV
 from prompts.cv_prompts import crear_sistema_prompts
 
 MAX_CV_CHARS = 25000
+MODELOS_EVALUACION = (
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+)
 
 
 class EvaluacionError(Exception):
@@ -71,7 +76,7 @@ def traducir_error_amigable(exc: Exception) -> str:
     )
 
 
-def crear_evaluador_cv():
+def crear_evaluador_cv(modelo: str = "gemini-3.1-flash-lite"):
     """Configura el modelo ChatGoogleGenerativeAI con salida estructurada AnalisisCV."""
     api_key = (
         os.getenv("GOOGLE_API_KEY")
@@ -82,11 +87,11 @@ def crear_evaluador_cv():
         raise ValueError("No se encontró la clave de acceso.")
 
     modelo_base = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite",
+        model=modelo,
         temperature=0.2,
         google_api_key=api_key,
-        timeout=25,
-        max_retries=1,
+        timeout=12,
+        max_retries=0,
     )
     modelo_estructurado = modelo_base.with_structured_output(AnalisisCV)
     chat_prompt = crear_sistema_prompts()
@@ -94,18 +99,30 @@ def crear_evaluador_cv():
 
 
 def evaluar_candidato(texto_cv: str, descripcion_puesto: str) -> AnalisisCV:
-    """Invoca la cadena de evaluación y devuelve el análisis estructurado del candidato."""
-    try:
-        texto_seguro, _ = limitar_texto_cv(texto_cv)
-        cadena_evaluacion = crear_evaluador_cv()
-        resultado = cadena_evaluacion.invoke(
-            {
-                "texto_cv": texto_seguro,
-                "descripcion_puesto": descripcion_puesto,
-            }
-        )
-        if resultado is None:
-            raise ValueError("Respuesta vacía del servicio.")
-        return resultado
-    except Exception as exc:
-        raise EvaluacionError(traducir_error_amigable(exc)) from exc
+    """Invoca la cadena de evaluación con reintentos rápidos ante bloqueos transitorios."""
+    texto_seguro, _ = limitar_texto_cv(texto_cv)
+    ultimo_error: Exception | None = None
+
+    for modelo in MODELOS_EVALUACION:
+        try:
+            cadena_evaluacion = crear_evaluador_cv(modelo=modelo)
+            resultado = cadena_evaluacion.invoke(
+                {
+                    "texto_cv": texto_seguro,
+                    "descripcion_puesto": descripcion_puesto,
+                }
+            )
+            if resultado is None:
+                raise ValueError("Respuesta vacía del servicio.")
+            return resultado
+        except Exception as exc:
+            ultimo_error = exc
+            mensaje = str(exc).lower()
+            es_transitorio = any(
+                token in mensaje
+                for token in ("503", "504", "unavailable", "deadline_exceeded", "timeout", "timed out", "high demand")
+            )
+            if not es_transitorio:
+                break
+
+    raise EvaluacionError(traducir_error_amigable(ultimo_error or Exception("Error desconocido")))
