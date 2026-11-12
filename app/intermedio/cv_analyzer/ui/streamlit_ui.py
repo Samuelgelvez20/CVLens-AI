@@ -71,3 +71,79 @@ def renderizar_entradas():
 
     return archivo_cv, descripcion_puesto, analizar_btn, limpiar_btn
 
+
+def obtener_evaluacion_principal(porcentaje: int) -> str:
+    """Devuelve la etiqueta de evaluación principal según el porcentaje de ajuste."""
+    if porcentaje >= 80:
+        return "Excelente"
+    if porcentaje >= 60:
+        return "Bueno"
+    if porcentaje >= 40:
+        return "Regular"
+    return "Bajo"
+
+
+def obtener_recomendacion_final(porcentaje: int) -> str:
+    """Devuelve la recomendación final de contratación según el porcentaje de ajuste."""
+    if porcentaje >= 70:
+        return "Candidato recomendado"
+    if porcentaje >= 50:
+        return "Candidato con potencial"
+    return "Candidato no recomendado"
+
+
+def mostrar_resultados(resultado: AnalisisCV) -> None:
+    """Presenta en la interfaz el análisis estructurado del candidato."""
+    st.divider()
+    st.subheader("Resultados del Análisis")
+
+    evaluacion = obtener_evaluacion_principal(resultado.porcentaje_ajuste)
+    recomendacion = obtener_recomendacion_final(resultado.porcentaje_ajuste)
+
+    col_metrica, col_estado = st.columns(2)
+    with col_metrica:
+        st.metric(
+            label="Porcentaje de Ajuste",
+            value=f"{resultado.porcentaje_ajuste}%",
+            delta=evaluacion,
+        )
+        st.progress(resultado.porcentaje_ajuste / 100)
+    with col_estado:
+        st.markdown("### Recomendación Final")
+        if resultado.porcentaje_ajuste >= 70:
+            st.success(recomendacion)
+        elif resultado.porcentaje_ajuste >= 50:
+            st.warning(recomendacion)
+        else:
+            st.error(recomendacion)
+
+    st.markdown("### Perfil del Candidato")
+    col_info1, col_info2, col_info3 = st.columns(3)
+    with col_info1:
+        st.markdown(f"**Nombre:** {resultado.nombre_candidato}")
+    with col_info2:
+        st.markdown(f"**Experiencia:** {resultado.experiencia_años} años")
+    with col_info3:
+        st.markdown(f"**Educación:** {resultado.education}")
+
+    st.markdown("**Experiencia Relevante:**")
+    st.write(resultado.experiencia_relevante)
+
+    st.markdown("### Habilidades Clave")
+    st.write(", ".join(resultado.habilidades_clave))
+
+    col_fort, col_mejora = st.columns(2)
+    with col_fort:
+        st.markdown("### Fortalezas")
+        for fortaleza in resultado.fortalezas:
+            st.markdown(f"- {fortaleza}")
+
+    with col_mejora:
+        st.markdown("### Áreas de Mejora")
+        for area in resultado.areas_mejora:
+            st.markdown(f"- {area}")
+
+    if st.button("Guardar Análisis"):
+        st.info("Funcionalidad en desarrollo: el almacenamiento de análisis aún no está disponible.")
+
+
