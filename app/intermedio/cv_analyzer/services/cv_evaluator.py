@@ -1,14 +1,27 @@
-from langchain_openai import ChatOpenAI
+import os
+
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 from models.cv_model import AnalisisCV
 from prompts.cv_prompts import crear_sistema_prompts
 
 
 def crear_evaluador_cv():
-    """Configura el modelo ChatOpenAI con salida estructurada AnalisisCV."""
-    modelo_base = ChatOpenAI(
-        model="gpt-4o-mini",
+    """Configura el modelo ChatGoogleGenerativeAI con salida estructurada AnalisisCV."""
+    api_key = (
+        os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+    if not api_key:
+        raise ValueError(
+            "No se encontró la clave de API. Configura GOOGLE_API_KEY en tu entorno o archivo .env."
+        )
+
+    modelo_base = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
         temperature=0.2,
+        google_api_key=api_key,
     )
     modelo_estructurado = modelo_base.with_structured_output(AnalisisCV)
     chat_prompt = crear_sistema_prompts()
@@ -37,4 +50,3 @@ def evaluar_candidato(texto_cv: str, descripcion_puesto: str) -> AnalisisCV:
             areas_mejora=["Verificar configuración de API y formato del CV"],
             porcentaje_ajuste=0,
         )
-

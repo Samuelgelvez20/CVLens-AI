@@ -1,5 +1,5 @@
 streamlit
 PyPDF2
-langchain-openai
+langchain-google-genai
 langchain-core
 pydantic
