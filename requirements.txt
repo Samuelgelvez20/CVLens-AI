@@ -1,0 +1,6 @@
+streamlit
+PyPDF2
+langchain-google-genai
+langchain-core
+pydantic
+psycopg2-binary
