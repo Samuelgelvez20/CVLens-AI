@@ -4,3 +4,6 @@ langchain-google-genai
 langchain-core
 pydantic
 psycopg2-binary
+fastapi
+uvicorn
+python-multipart
