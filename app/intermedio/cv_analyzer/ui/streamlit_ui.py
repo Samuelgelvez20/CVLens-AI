@@ -1,8 +1,34 @@
+import csv
+import io
+import json
 import streamlit as st
 
 from models.cv_model import AnalisisCV
-from services.cv_evaluator import evaluar_candidato
+from services.cv_evaluator import EvaluacionError, evaluar_candidato, limitar_texto_cv
+from services.database import (
+    extraer_titulo_vacante,
+    guardar_analisis_en_bd,
+    inicializar_bd,
+    listar_analisis_por_vacante,
+    listar_vacantes,
+    obtener_vacante_por_id,
+)
 from services.pdf_processor import extraer_texto_pdf
+
+
+def inicializar_estado() -> None:
+    """Inicializa las claves necesarias en st.session_state."""
+    valores_por_defecto = {
+        "uploader_key": 0,
+        "vacante_titulo_input": "",
+        "vacante_desc_input": "",
+        "ultimo_resultado": None,
+        "vista_historial": None,
+        "mensaje_guardado": False,
+    }
+    for clave, valor in valores_por_defecto.items():
+        if clave not in st.session_state:
+            st.session_state[clave] = valor
 
 
 def configurar_pagina() -> None:
@@ -20,22 +46,68 @@ def configurar_pagina() -> None:
 
 
 def renderizar_sidebar() -> None:
-    """Muestra en la barra lateral los criterios de evaluación y recomendaciones de uso."""
+    """Muestra los criterios de evaluación y el historial de vacantes guardadas."""
     with st.sidebar:
-        st.header("Criterios de Evaluación")
-        st.markdown(
-            """
-            El modelo evalúa al candidato considerando los siguientes pesos orientativos:
-            - **Experiencia relevante:** 40%
-            - **Habilidades técnicas:** 35%
-            - **Formación y certificaciones:** 15%
-            - **Coherencia profesional:** 10%
-            """
-        )
+        with st.expander("Criterios de Evaluación", expanded=False):
+            st.markdown(
+                """
+                El modelo evalúa al candidato considerando los siguientes pesos orientativos:
+                - **Experiencia relevante:** 40%
+                - **Habilidades técnicas:** 35%
+                - **Formación y certificaciones:** 15%
+                - **Coherencia profesional:** 10%
+                """
+            )
+            st.caption(
+                "Sube un PDF con texto seleccionable. No se aplica OCR a documentos escaneados."
+            )
+
         st.divider()
-        st.info(
-            "Sube un PDF con texto seleccionable. No se aplica OCR a documentos escaneados."
-        )
+        st.header("🗂️ Historial de Análisis")
+
+        try:
+            vacantes = listar_vacantes()
+        except Exception:
+            st.warning("No se pudo cargar el historial en este momento.")
+            return
+
+        if not vacantes:
+            st.caption("Aún no hay análisis guardados. Analiza un CV y pulsa Guardar Análisis.")
+            return
+
+        for vacante in vacantes:
+            with st.container(border=True):
+                st.markdown(f"**{vacante['titulo']}**")
+                st.caption(f"{vacante['total_cvs']} CV(s) guardado(s)")
+
+                extracto = " ".join(vacante["descripcion"].split())
+                if len(extracto) > 90:
+                    extracto = extracto[:87] + "..."
+                st.caption(extracto)
+
+                col_v, col_c = st.columns(2)
+                with col_v:
+                    if st.button(
+                        "Ver vacante",
+                        key=f"ver_vacante_{vacante['id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["vista_historial"] = {
+                            "modo": "vacante",
+                            "vacante_id": vacante["id"],
+                        }
+                        st.rerun()
+                with col_c:
+                    if st.button(
+                        "Ver CVs",
+                        key=f"ver_cvs_{vacante['id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["vista_historial"] = {
+                            "modo": "cvs",
+                            "vacante_id": vacante["id"],
+                        }
+                        st.rerun()
 
 
 def renderizar_entradas():
@@ -47,14 +119,21 @@ def renderizar_entradas():
         archivo_cv = st.file_uploader(
             "Carga el CV en formato PDF",
             type=["pdf"],
+            key=f"cv_uploader_{st.session_state['uploader_key']}",
             help="Solo se admiten archivos PDF con texto seleccionable.",
         )
 
     with col_puesto:
         st.subheader("2. Descripción del Puesto")
+        titulo_vacante = st.text_input(
+            "Nombre de la vacante (opcional)",
+            key="vacante_titulo_input",
+            placeholder="Ej. Desarrollador Backend Python Junior",
+        )
         descripcion_puesto = st.text_area(
             "Requisitos, habilidades y responsabilidades del puesto",
-            height=200,
+            height=175,
+            key="vacante_desc_input",
             placeholder=(
                 "Puesto: Desarrollador Python\n"
                 "Requisitos obligatorios: 3 años de experiencia, Python, APIs REST y PostgreSQL.\n"
@@ -69,7 +148,7 @@ def renderizar_entradas():
     with col_btn_limpiar:
         limpiar_btn = st.button("Limpiar", use_container_width=True)
 
-    return archivo_cv, descripcion_puesto, analizar_btn, limpiar_btn
+    return archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn, limpiar_btn
 
 
 def obtener_evaluacion_principal(porcentaje: int) -> str:
@@ -92,11 +171,8 @@ def obtener_recomendacion_final(porcentaje: int) -> str:
     return "Candidato no recomendado"
 
 
-def mostrar_resultados(resultado: AnalisisCV) -> None:
-    """Presenta en la interfaz el análisis estructurado del candidato."""
-    st.divider()
-    st.subheader("Resultados del Análisis")
-
+def renderizar_detalle_analisis(resultado: AnalisisCV) -> None:
+    """Muestra las métricas, perfil, habilidades, fortalezas y áreas de mejora."""
     evaluacion = obtener_evaluacion_principal(resultado.porcentaje_ajuste)
     recomendacion = obtener_recomendacion_final(resultado.porcentaje_ajuste)
 
@@ -143,18 +219,193 @@ def mostrar_resultados(resultado: AnalisisCV) -> None:
         for area in resultado.areas_mejora:
             st.markdown(f"- {area}")
 
-    if st.button("Guardar Análisis"):
-        st.info("Funcionalidad en desarrollo: el almacenamiento de análisis aún no está disponible.")
+
+def generar_csv_candidatos(analisis_lista: list[dict]) -> str:
+    """Genera un archivo CSV en memoria con el ranking de candidatos de una vacante."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "Candidato",
+            "Archivo PDF",
+            "Porcentaje Ajuste",
+            "Evaluación",
+            "Recomendación",
+            "Años Experiencia",
+            "Educación",
+            "Habilidades Clave",
+        ]
+    )
+    for item in analisis_lista:
+        porcentaje = item["porcentaje_ajuste"]
+        writer.writerow(
+            [
+                item["nombre_candidato"],
+                item["nombre_archivo_pdf"],
+                f"{porcentaje}%",
+                obtener_evaluacion_principal(porcentaje),
+                obtener_recomendacion_final(porcentaje),
+                item["experiencia_anos"],
+                item["education"],
+                ", ".join(item["habilidades_clave"]),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def renderizar_vista_historial() -> None:
+    """Muestra el detalle de la vacante o los CVs asociados seleccionados desde el historial."""
+    vista = st.session_state.get("vista_historial")
+    if not vista:
+        return
+
+    vacante = obtener_vacante_por_id(vista["vacante_id"])
+    if not vacante:
+        st.session_state["vista_historial"] = None
+        return
+
+    st.divider()
+    col_titulo, col_cerrar = st.columns([5, 1])
+    with col_titulo:
+        if vista["modo"] == "vacante":
+            st.subheader(f"📋 Vacante: {vacante['titulo']}")
+        else:
+            st.subheader(f"👥 CVs aplicados a: {vacante['titulo']}")
+    with col_cerrar:
+        if st.button("Cerrar vista", use_container_width=True):
+            st.session_state["vista_historial"] = None
+            st.rerun()
+
+    if vista["modo"] == "vacante":
+        st.markdown("**Enunciado completo de la vacante:**")
+        st.text_area(
+            "Enunciado guardado",
+            value=vacante["descripcion"],
+            height=240,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+        col_a, col_b, _ = st.columns([1.5, 1.5, 3])
+        with col_a:
+            if st.button("Cargar en el formulario", use_container_width=True):
+                st.session_state["vacante_titulo_input"] = vacante["titulo"]
+                st.session_state["vacante_desc_input"] = vacante["descripcion"]
+                st.session_state["vista_historial"] = None
+                st.rerun()
+        with col_b:
+            if st.button("Ver CVs de esta vacante", use_container_width=True):
+                st.session_state["vista_historial"] = {
+                    "modo": "cvs",
+                    "vacante_id": vacante["id"],
+                }
+                st.rerun()
+        return
+
+    analisis_lista = listar_analisis_por_vacante(vacante["id"])
+    if not analisis_lista:
+        st.info("Todavía no hay CVs guardados para esta vacante.")
+        return
+
+    tabla_resumen = [
+        {
+            "Candidato": item["nombre_candidato"],
+            "Archivo": item["nombre_archivo_pdf"],
+            "Ajuste (%)": item["porcentaje_ajuste"],
+            "Evaluación": obtener_evaluacion_principal(item["porcentaje_ajuste"]),
+            "Recomendación": obtener_recomendacion_final(item["porcentaje_ajuste"]),
+            "Experiencia (años)": item["experiencia_anos"],
+        }
+        for item in analisis_lista
+    ]
+    st.dataframe(tabla_resumen, use_container_width=True, hide_index=True)
+
+    col_csv, col_json, _ = st.columns([1, 1, 4])
+    with col_csv:
+        st.download_button(
+            label="Exportar CSV",
+            data=generar_csv_candidatos(analisis_lista),
+            file_name=f"candidatos_vacante_{vacante['id']}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with col_json:
+        st.download_button(
+            label="Exportar JSON",
+            data=json.dumps(analisis_lista, ensure_ascii=False, indent=2, default=str),
+            file_name=f"candidatos_vacante_{vacante['id']}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    for idx, item in enumerate(analisis_lista, start=1):
+        etiqueta = (
+            f"#{idx} — {item['nombre_candidato']} | "
+            f"{item['porcentaje_ajuste']}% ({obtener_recomendacion_final(item['porcentaje_ajuste'])}) | "
+            f"{item['nombre_archivo_pdf']}"
+        )
+        with st.expander(etiqueta, expanded=(idx == 1)):
+            modelo_item = AnalisisCV(
+                nombre_candidato=item["nombre_candidato"],
+                experiencia_años=item["experiencia_anos"],
+                habilidades_clave=item["habilidades_clave"],
+                education=item["education"],
+                experiencia_relevante=item["experiencia_relevante"],
+                fortalezas=item["fortalezas"],
+                areas_mejora=item["areas_mejora"],
+                porcentaje_ajuste=item["porcentaje_ajuste"],
+            )
+            renderizar_detalle_analisis(modelo_item)
+
+
+def mostrar_resultados(resultado_state: dict) -> None:
+    """Presenta el resultado del último análisis y permite guardarlo en el historial."""
+    st.divider()
+    st.subheader("Resultados del Análisis")
+
+    if resultado_state.get("truncado"):
+        st.info(
+            "El documento era muy extenso y se analizó su contenido principal para agilizar la evaluación."
+        )
+
+    renderizar_detalle_analisis(resultado_state["analisis"])
+
+    if resultado_state.get("guardado"):
+        st.success("Análisis guardado en el historial de la vacante.")
+    else:
+        if st.button("Guardar Análisis", type="secondary"):
+            try:
+                guardar_analisis_en_bd(
+                    titulo_vacante=resultado_state["titulo"],
+                    descripcion_vacante=resultado_state["descripcion"],
+                    nombre_archivo_pdf=resultado_state["nombre_archivo"],
+                    analisis=resultado_state["analisis"],
+                )
+                resultado_state["guardado"] = True
+                st.session_state["ultimo_resultado"] = resultado_state
+                st.session_state["mensaje_guardado"] = True
+                st.rerun()
+            except Exception:
+                st.error(
+                    "No se pudo guardar el análisis en la base de datos. Inténtalo nuevamente."
+                )
 
 
 def main() -> None:
     """Punto de entrada principal de la interfaz de Streamlit."""
+    inicializar_bd()
+    inicializar_estado()
     configurar_pagina()
     renderizar_sidebar()
 
-    archivo_cv, descripcion_puesto, analizar_btn, limpiar_btn = renderizar_entradas()
+    archivo_cv, titulo_vacante, descripcion_puesto, analizar_btn, limpiar_btn = renderizar_entradas()
 
     if limpiar_btn:
+        st.session_state["vacante_titulo_input"] = ""
+        st.session_state["vacante_desc_input"] = ""
+        st.session_state["ultimo_resultado"] = None
+        st.session_state["vista_historial"] = None
+        st.session_state["mensaje_guardado"] = False
+        st.session_state["uploader_key"] += 1
         st.rerun()
 
     if analizar_btn:
@@ -162,19 +413,35 @@ def main() -> None:
             st.warning(
                 "Por favor, carga un CV en PDF y escribe la descripción del puesto antes de analizar."
             )
-            return
+        else:
+            with st.spinner("Extrayendo texto del PDF..."):
+                texto_cv = extraer_texto_pdf(archivo_cv)
 
-        with st.spinner("Extrayendo texto del PDF..."):
-            texto_cv = extraer_texto_pdf(archivo_cv)
+            if texto_cv.startswith("Error"):
+                st.error(
+                    "No se pudo leer el contenido del PDF. Asegúrate de que sea un archivo válido con texto seleccionable."
+                )
+            else:
+                texto_cv_seguro, fue_truncado = limitar_texto_cv(texto_cv)
+                with st.spinner("Analizando candidato con IA..."):
+                    try:
+                        resultado = evaluar_candidato(texto_cv_seguro, descripcion_puesto)
+                        titulo_final = (
+                            titulo_vacante.strip() or extraer_titulo_vacante(descripcion_puesto)
+                        )
+                        st.session_state["ultimo_resultado"] = {
+                            "analisis": resultado,
+                            "titulo": titulo_final,
+                            "descripcion": descripcion_puesto.strip(),
+                            "nombre_archivo": archivo_cv.name,
+                            "truncado": fue_truncado,
+                            "guardado": False,
+                        }
+                        st.session_state["mensaje_guardado"] = False
+                    except EvaluacionError as err:
+                        st.error(str(err))
 
-        if texto_cv.startswith("Error"):
-            st.error(texto_cv)
-            return
+    if st.session_state.get("ultimo_resultado"):
+        mostrar_resultados(st.session_state["ultimo_resultado"])
 
-        with st.spinner("Analizando candidato con IA..."):
-            resultado = evaluar_candidato(texto_cv, descripcion_puesto)
-
-        mostrar_resultados(resultado)
-
-
-
+    renderizar_vista_historial()
