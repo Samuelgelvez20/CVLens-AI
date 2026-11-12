@@ -19,7 +19,7 @@ def crear_evaluador_cv():
         )
 
     modelo_base = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         temperature=0.2,
         google_api_key=api_key,
     )
